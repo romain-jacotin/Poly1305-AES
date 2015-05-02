@@ -1,5 +1,6 @@
 package main
 
+import "crypto/aes"
 import "fmt"
 
 // This long comment is a small extract from paper "Poly1305-AES message-authentication code"
@@ -12,7 +13,7 @@ import "fmt"
 //   'r' a 16-byte additional key
 //   'n' a 16-byte nonce
 //
-// The Poly1305-AES formula is a straightforward polynomial evaluation modulo 2^130 − 5
+// The Poly1305-AES formula is a straightforward polynomial evaluation modulo (2^130) − 5
 // Most of the detail is in key format and message padding.
 // ------------------------------------------------------------------------------------------------
 // MESSAGES
@@ -82,7 +83,7 @@ import "fmt"
 func Poly1305_AES( m *[]byte, k [16]byte, r [16]byte, n [16]byte ) {
     var rbar, h, p, c uint128
     var s, hash [16]byte
-    var j,l int
+    var i, j, l int
 
     l = len(m)
     h = 0
@@ -93,14 +94,21 @@ func Poly1305_AES( m *[]byte, k [16]byte, r [16]byte, n [16]byte ) {
         rbar += uint128(r[j]) << (8 * j)
     }
 
-    while (l > 0) {
+    i = 0
+    for i < l {
+        // Consider each consecutives 16 bytes of m as 'c' a Little Endian uint128
+        // If the size of the last chunk of 16 bytes is less than 16:
+        //    then consider the immediate missing byte as equal to 1 and consider the next missing bytes equals to zero
+        // If the size of the chunk is 16 bytes:
+        //    then consider the 17th bytes to be equal to 1
         c = 0
-        for (j = 0;(j < 16) && (j < l);++j) {
-            c += uint128(m[j]) << (8 * j)
+        for (j = 0;(j < 16) && ((i+j) < l);++j) {
+            c += uint128(m[i+j]) << (8 * j)
         }
+        i += j
         c += 1 << (8 * j)
-        m += j
-        l -= j
+
+        // Update the accumulator 'h' so at the end it is equal to (c1*r^q + c2*r^(q−1) + ··· + cq*r^1) mod 2^(130 −5)
         h = ((h + c) * rbar) % p
     }
 
@@ -134,7 +142,7 @@ func Poly1305_AES( m *[]byte, k [16]byte, r [16]byte, n [16]byte ) {
 // ------------------------------------------------------------------------------------------------
 // m                      (null message)
 // r ￼                    a0 f3 08 00 00 f4 64 00 d0 c7 e9 07 6c 83 44 03
-// m(r) mod 2130 − 5 ￼    000000000000000000000000000000000
+// m(r) mod 2^130 − 5￼    000000000000000000000000000000000
 // k ￼                    75 de aa 25 c0 9f 20 8e 1d c4 ce 6b 5c ad 3f bf
 // n ￼                    61 ee 09 21 8d 29 b0 aa ed 7e 15 4a 2c 55 09 cc
 // AESk(n) ￼              dd 3f ab 22 51 f1 1a c7 59 f0 88 71 29 cc 2e e7
@@ -145,11 +153,11 @@ func Poly1305_AES( m *[]byte, k [16]byte, r [16]byte, n [16]byte ) {
 // c1 ￼                   124bcb676f4f39395d883fb0f19ea3c66
 // c2 ￼                   1366165d05266af8cdb6aa27e1079e6d7
 // r ￼                    48 44 3d 0b b0 d2 11 09 c8 9a 10 0b 5c e2 c2 08
-// m(r) mod 2130 − 5 ￼    1cfb6f98add6a0ea7c631de020225cc8b
+// m(r) mod 2^130 − 5￼    1cfb6f98add6a0ea7c631de020225cc8b
 // k ￼                    6a cb 5f 61 a7 17 6d d3 20 c5 c1 eb 2e dc dc 74
 // n ￼                    ae 21 2a 55 39 97 29 59 5d ea 45 8b c6 21 ff 0e
 // AESk(n) ￼              83 14 9c 69 b5 61 dd 88 29 8a 17 98 b1 07 16 ef
-// Poly1305r(m,AESk(n)) ￼ 0e e1 c1 6b b7 3f 0f 4f d1 98 81 75 3c 01 cd be
+// Poly1305r(m,AESk(n))   0e e1 c1 6b b7 3f 0f 4f d1 98 81 75 3c 01 cd be
 // ------------------------------------------------------------------------------------------------
 // m ￼                    ab 08 12 72 4a 7f 1e 34 27 42 cb ed 37 4d 94 d1
 //                        36 c6 b8 79 5d 45 b3 81 98 30 f2 c0 44 91 fa f0
@@ -167,22 +175,33 @@ func Poly1305_AES( m *[]byte, k [16]byte, r [16]byte, n [16]byte ) {
 // Poly1305r(m,AESk(n)) ￼ 51 54 ad 0d 2c b2 6e 01 27 4f c5 11 48 49 1f 1b
 // ------------------------------------------------------------------------------------------------
 
-func Poly1305_AES(inputdata *[]byte, k_aes [16]byte, r_key [16]byte, nonce [16]byte) [16]byte {
-	var hash [16]byte
+func Poly1305_AES(inputdata *[]byte, k_aes *[]byte, r_key *[]byte, nonce *[]byte) *[]byte {
+	hash := make([]byte, 16)
+	s := make([]byte, 16)
 
-	return hash
+	cipher, err := aes.NewCipher(*k_aes)
+	if err != nil {
+		fmt.Printf("crypto.aes.NewCipher( []byte ) error\n")
+		return nil
+	}
+	cipher.Encrypt(s, *nonce)
+	fmt.Printf("AES-128(k,n)                  = [%v] %x\n", len(s), s)
+	return &hash
 }
 
 func main() {
-	data1 := []byte{'h', 'e', 'l', 'l', 'o', ' ', 'w', 'o', 'r', 'l', 'd', '!', 'g', 'o', 'o', 'd', 'b', 'y', 'e', '!'}
-	data2 := []byte{'I', ' ', 'a', 'm', ' ', 'a', ' ', 'g', 'o', 'p', 'h', 'e', 'r', '!'}
-	k_aes := [16]byte{0}
-	r_key := [16]byte{0}
-	nonce := [16]byte{0}
+	data := []byte{0xab, 0x08, 0x12, 0x72, 0x4a, 0x7f, 0x1e, 0x34, 0x27, 0x42, 0xcb, 0xed, 0x37, 0x4d, 0x94, 0xd1,
+		0x36, 0xc6, 0xb8, 0x79, 0x5d, 0x45, 0xb3, 0x81, 0x98, 0x30, 0xf2, 0xc0, 0x44, 0x91, 0xfa, 0xf0,
+		0x99, 0x0c, 0x62, 0xe4, 0x8b, 0x80, 0x18, 0xb2, 0xc3, 0xe4, 0xa0, 0xfa, 0x31, 0x34, 0xcb, 0x67,
+		0xfa, 0x83, 0xe1, 0x58, 0xc9, 0x94, 0xd9, 0x61, 0xc4, 0xcb, 0x21, 0x09, 0x5c, 0x1b, 0xf9}
+	k_aes := []byte{0xe1, 0xa5, 0x66, 0x8a, 0x4d, 0x5b, 0x66, 0xa5, 0xf6, 0x8c, 0xc5, 0x42, 0x4e, 0xd5, 0x98, 0x2d}
+	r_key := []byte{0x12, 0x97, 0x6a, 0x08, 0xc4, 0x42, 0x6d, 0x0c, 0xe8, 0xa8, 0x24, 0x07, 0xc4, 0xf4, 0x82, 0x07}
+	nonce := []byte{0x9a, 0xe8, 0x31, 0xe7, 0x43, 0x97, 0x8d, 0x3a, 0x23, 0x52, 0x7c, 0x71, 0x28, 0x14, 0x9e, 0x3a}
 
-	fmt.Printf("\ndata[%v bytes] = \"hello world!goodbye!\"\n", len(data1))
-	fmt.Printf("Poly1305-AES = %x\n\n", Poly1305_AES(&data1, k_aes, r_key, nonce))
-
-	fmt.Printf("data[%v bytes] = \"I am a gopher!\"\n", len(data2))
-	fmt.Printf("Poly1305-AES = %x\n\n", Poly1305_AES(&data2, k_aes, r_key, nonce))
+	fmt.Printf("\ndata                          = [%v] %x\n", len(data), data)
+	fmt.Printf("r                             = [%v] %x\n", len(r_key), r_key)
+	fmt.Printf("k                             = [%v] %x\n", len(k_aes), k_aes)
+	fmt.Printf("n                             = [%v] %x\n", len(nonce), nonce)
+	poly1305 := Poly1305_AES(&data, &k_aes, &r_key, &nonce)
+	fmt.Printf("Poly1305(data,r,AES-128(k,n)) = [%v] %x\n\n", len(*poly1305), *poly1305)
 }

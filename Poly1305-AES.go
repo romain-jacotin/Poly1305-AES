@@ -175,8 +175,13 @@ func Poly1305_AES( m *[]byte, k [16]byte, r [16]byte, n [16]byte ) {
 // Poly1305r(m,AESk(n)) ￼ 51 54 ad 0d 2c b2 6e 01 27 4f c5 11 48 49 1f 1b
 // ------------------------------------------------------------------------------------------------
 
-func Poly1305_AES(inputdata *[]byte, k_aes *[]byte, r_key *[]byte, nonce *[]byte) *[]byte {
+func Poly1305(inputdata, r_key, s_key *[]byte) *[]byte {
 	hash := make([]byte, 16)
+
+	return &hash
+}
+
+func AES_128(k_aes, nonce *[]byte) *[]byte {
 	s := make([]byte, 16)
 
 	cipher, err := aes.NewCipher(*k_aes)
@@ -185,8 +190,7 @@ func Poly1305_AES(inputdata *[]byte, k_aes *[]byte, r_key *[]byte, nonce *[]byte
 		return nil
 	}
 	cipher.Encrypt(s, *nonce)
-	fmt.Printf("AES-128(k,n)                  = [%v] %x\n", len(s), s)
-	return &hash
+	return &s
 }
 
 func main() {
@@ -198,10 +202,13 @@ func main() {
 	r_key := []byte{0x12, 0x97, 0x6a, 0x08, 0xc4, 0x42, 0x6d, 0x0c, 0xe8, 0xa8, 0x24, 0x07, 0xc4, 0xf4, 0x82, 0x07}
 	nonce := []byte{0x9a, 0xe8, 0x31, 0xe7, 0x43, 0x97, 0x8d, 0x3a, 0x23, 0x52, 0x7c, 0x71, 0x28, 0x14, 0x9e, 0x3a}
 
+	s := AES_128(&k_aes, &nonce)
+	mac := Poly1305(&data, &r_key, s)
+
 	fmt.Printf("\ndata                          = [%v] %x\n", len(data), data)
-	fmt.Printf("r                             = [%v] %x\n", len(r_key), r_key)
 	fmt.Printf("k                             = [%v] %x\n", len(k_aes), k_aes)
 	fmt.Printf("n                             = [%v] %x\n", len(nonce), nonce)
-	poly1305 := Poly1305_AES(&data, &k_aes, &r_key, &nonce)
-	fmt.Printf("Poly1305(data,r,AES-128(k,n)) = [%v] %x\n\n", len(*poly1305), *poly1305)
+	fmt.Printf("AES-128(k,n)                  = [%v] %x\n\n", len(*s), *s)
+	fmt.Printf("r                             = [%v] %x\n", len(r_key), r_key)
+	fmt.Printf("Poly1305(data,r,AES-128(k,n)) = [%v] %x\n\n", len(*mac), *mac)
 }

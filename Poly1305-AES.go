@@ -175,12 +175,6 @@ func Poly1305_AES( m *[]byte, k [16]byte, r [16]byte, n [16]byte ) {
 // Poly1305r(m,AESk(n)) ￼ 51 54 ad 0d 2c b2 6e 01 27 4f c5 11 48 49 1f 1b
 // ------------------------------------------------------------------------------------------------
 
-func Poly1305(inputdata, r_key, s_key *[]byte) *[]byte {
-	hash := make([]byte, 16)
-
-	return &hash
-}
-
 func AES_128(k_aes, nonce *[]byte) *[]byte {
 	s := make([]byte, 16)
 
@@ -193,6 +187,73 @@ func AES_128(k_aes, nonce *[]byte) *[]byte {
 	return &s
 }
 
+func Poly1305(mac, inputdata, r_key, s_key *[]byte) bool {
+	var r0, r1, r2, s0, s1, h0, h1, h2 uint64
+	var i uint
+
+	if (len(*mac) != 16) || (len(*r_key) != 16) || (len(*s_key) != 16) {
+		return false
+	}
+
+	// Variables nitialization: read 'r' and 's' as Little Endian unsigned int
+	// r &= 0xffffffc0ffffffc0ffffffc0fffffff as requires by the Poly1305 specifications
+	//
+	// NOTE: we need 'r', 'h' and 'c' to be uint130 because of the required modulus 2^130 - 5
+	//       uint130(r) = 42 most significant bits(r2) + 44 middle bits(r1) + 44 less significant bits(r0)
+
+	// r0 = LSB 44 bits of 'r' as uint130
+	r0 = uint64((*r_key)[0]) |
+		(uint64((*r_key)[1]) << 8) |
+		(uint64((*r_key)[2]) << 16) |
+		(uint64((*r_key)[3]) << 24) |
+		(uint64((*r_key)[4]) << 32) |
+		(uint64((*r_key)[5]) << 40)
+	r0 &= 0xffc0fffffff
+
+	// r1 = middle 44 bits of 'r' as uint130
+	r1 = (uint64((*r_key)[5]) >> 4) |
+		(uint64((*r_key)[6]) << 4) |
+		(uint64((*r_key)[7]) << 12) |
+		(uint64((*r_key)[8]) << 20) |
+		(uint64((*r_key)[9]) << 28) |
+		(uint64((*r_key)[10]) << 36)
+	r1 &= 0xfffffc0ffff
+
+	// r2 = MSB 42 of 'r' as uint130
+	r2 = uint64((*r_key)[11]) |
+		(uint64((*r_key)[12]) << 8) |
+		(uint64((*r_key)[13]) << 16) |
+		(uint64((*r_key)[14]) << 24) |
+		(uint64((*r_key)[15]) << 32)
+	r2 &= 0x00ffffffc0f
+
+	// Read 's' as Little Endian uint128 (s0 = low 64 bits, s1 = high 64 bits)
+	for i = 0; i < 8; i++ {
+		s0 |= uint64((*s_key)[i]) << (i * 8)
+		s1 |= uint64((*s_key)[i+8]) << (i * 8)
+	}
+
+	// if chunk'size == 16 bytes then add a 17th byte = 0x01
+	// if chunk'size  < 16 bytes then add a last byte = 0x01, and bytes up to 17th are equals to 0
+	// foreach chunk c update h = ((h + c) * r) % ((2^130)-5)
+
+	// final modulus h % ((2^130)-5)
+
+	// h = h + s
+
+	// mac = h % (2^128)
+	h0 = ((h0) | (h1 << 44))
+	h1 = ((h1 >> 20) | (h2 << 24))
+
+	// Writing in Little Endian mode the 128 bits hash value (=16 bytes)
+	for i = 0; i < 8; i++ {
+		(*mac)[i] = byte((h0 >> (i * 8)) & 0xff)
+		(*mac)[i+8] = byte((h1 >> (i * 8)) & 0xff)
+	}
+
+	return true
+}
+
 func main() {
 	data := []byte{0xab, 0x08, 0x12, 0x72, 0x4a, 0x7f, 0x1e, 0x34, 0x27, 0x42, 0xcb, 0xed, 0x37, 0x4d, 0x94, 0xd1,
 		0x36, 0xc6, 0xb8, 0x79, 0x5d, 0x45, 0xb3, 0x81, 0x98, 0x30, 0xf2, 0xc0, 0x44, 0x91, 0xfa, 0xf0,
@@ -201,14 +262,18 @@ func main() {
 	k_aes := []byte{0xe1, 0xa5, 0x66, 0x8a, 0x4d, 0x5b, 0x66, 0xa5, 0xf6, 0x8c, 0xc5, 0x42, 0x4e, 0xd5, 0x98, 0x2d}
 	r_key := []byte{0x12, 0x97, 0x6a, 0x08, 0xc4, 0x42, 0x6d, 0x0c, 0xe8, 0xa8, 0x24, 0x07, 0xc4, 0xf4, 0x82, 0x07}
 	nonce := []byte{0x9a, 0xe8, 0x31, 0xe7, 0x43, 0x97, 0x8d, 0x3a, 0x23, 0x52, 0x7c, 0x71, 0x28, 0x14, 0x9e, 0x3a}
+	mac := make([]byte, 16)
 
 	s := AES_128(&k_aes, &nonce)
-	mac := Poly1305(&data, &r_key, s)
 
-	fmt.Printf("\ndata                          = [%v] %x\n", len(data), data)
-	fmt.Printf("k                             = [%v] %x\n", len(k_aes), k_aes)
-	fmt.Printf("n                             = [%v] %x\n", len(nonce), nonce)
-	fmt.Printf("AES-128(k,n)                  = [%v] %x\n\n", len(*s), *s)
-	fmt.Printf("r                             = [%v] %x\n", len(r_key), r_key)
-	fmt.Printf("Poly1305(data,r,AES-128(k,n)) = [%v] %x\n\n", len(*mac), *mac)
+	if Poly1305(&mac, &data, &r_key, s) {
+		fmt.Printf("\ndata                          = [%v] %x\n", len(data), data)
+		fmt.Printf("k                             = [%v] %x\n", len(k_aes), k_aes)
+		fmt.Printf("n                             = [%v] %x\n", len(nonce), nonce)
+		fmt.Printf("AES-128(k,n)                  = [%v] %x\n", len(*s), *s)
+		fmt.Printf("r                             = [%v] %x\n", len(r_key), r_key)
+		fmt.Printf("Poly1305(data,r,AES-128(k,n)) = [%v] %x\n\n", len(mac), mac)
+	} else {
+		fmt.Printf("Poly1305(data,r,AES-128(k,n)) mac and keys size must be 16 bytes!\n\n", len(mac), mac)
+	}
 }

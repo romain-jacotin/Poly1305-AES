@@ -187,13 +187,15 @@ func AES_128(k_aes, nonce *[]byte) *[]byte {
 	return &s
 }
 
-func Poly1305(mac, inputdata, r_key, s_key *[]byte) bool {
-	var r0, r1, r2, s0, s1, h0, h1, h2 uint64
-	var i uint
+func Poly1305(mac, data, r_key, s_key *[]byte) bool {
+	var r0, r1, r2, s0, s1, h0, h1, h2, c, c0, c1, c2 uint64
+	var i, j, l uint
 
 	if (len(*mac) != 16) || (len(*r_key) != 16) || (len(*s_key) != 16) {
 		return false
 	}
+
+	l = uint(len(*data))
 
 	// Variables nitialization: read 'r' and 's' as Little Endian unsigned int
 	// r &= 0xffffffc0ffffffc0ffffffc0fffffff as requires by the Poly1305 specifications
@@ -219,7 +221,7 @@ func Poly1305(mac, inputdata, r_key, s_key *[]byte) bool {
 		(uint64((*r_key)[10]) << 36)
 	r1 &= 0xfffffc0ffff
 
-	// r2 = MSB 42 of 'r' as uint130
+	// r2 = MSB 42 bits of 'r' as uint130
 	r2 = uint64((*r_key)[11]) |
 		(uint64((*r_key)[12]) << 8) |
 		(uint64((*r_key)[13]) << 16) |
@@ -227,25 +229,74 @@ func Poly1305(mac, inputdata, r_key, s_key *[]byte) bool {
 		(uint64((*r_key)[15]) << 32)
 	r2 &= 0x00ffffffc0f
 
+	// h = 0
+	h0 = 0
+	h1 = 0
+	h2 = 0
+
 	// Read 's' as Little Endian uint128 (s0 = low 64 bits, s1 = high 64 bits)
 	for i = 0; i < 8; i++ {
 		s0 |= uint64((*s_key)[i]) << (i * 8)
 		s1 |= uint64((*s_key)[i+8]) << (i * 8)
 	}
 
-	// if chunk'size == 16 bytes then add a 17th byte = 0x01
-	// if chunk'size  < 16 bytes then add a last byte = 0x01, and bytes up to 17th are equals to 0
-	// foreach chunk c update h = ((h + c) * r) % ((2^130)-5)
+	i = 0
+	for i < l {
+		// Read 'c' from a chunk of 16 bytes (or less if not enough data) as a Little Endian unsigned integer (uint130)
+		// uint130(c) = 42 most significant bits(c2) + 44 middle bits(c1) + 44 less significant bits(c0)
+		c0 = 0
+		c1 = 0
+		c2 = 0
+		for j = 0; (j < 16) && (i < l); j++ {
+			if j < 5 {
+				c0 |= uint64((*data)[i]) << (j * 8)
+			} else if j == 5 {
+				c0 |= uint64((*data)[i]) << 40
+				c1 |= uint64((*data)[i]) >> 4
+			} else if j < 11 {
+				c1 |= uint64((*data)[i]) << (4 + (j-6)*8)
+			} else { // j >= 11
+				c2 |= uint64((*data)[i]) << ((j - 11) * 8)
+			}
+			i++
+		}
+		c0 &= 0xfffffffffff
+		c1 &= 0xfffffffffff
+		c2 &= 0x3ffffffffff
 
+		// if chunk'size == 16 bytes then add a 17th byte = 0x01
+		// if chunk'size  < 16 bytes then add a last byte = 0x01, and bytes up to 17th are equals to 0
+		if j < 6 {
+			c0 |= 1 << (j * 8)
+		} else if j < 11 {
+			c1 |= 1 << (4 + (j-6)*8)
+		} else { // j >= 11
+			c2 |= 1 << ((j - 11) * 8)
+		}
+
+		// for each chunk 'c', update 'h'
+		// h = ((h + c) * r) % ((2^130)-5)
+
+	}
 	// final modulus h % ((2^130)-5)
 
-	// h = h + s
+	// h = h + s (in uint130)
+	h0 += ((s0) & 0xfffffffffff)
+	c = h0 >> 44
+	h0 &= 0xfffffffffff
 
-	// mac = h % (2^128)
+	h1 += (((s0 >> 44) | (s1 << 20)) & 0xfffffffffff) + c
+	c = h1 >> 44
+	h1 &= 0xfffffffffff
+
+	h2 += ((s1 >> 24) & 0x3ffffffffff) + c
+	h2 &= 0x3ffffffffff
+
+	// Transform h in uint128: h = h % (2^128)
 	h0 = ((h0) | (h1 << 44))
 	h1 = ((h1 >> 20) | (h2 << 24))
 
-	// Writing in Little Endian mode the 128 bits hash value (=16 bytes)
+	// Writing 'h' in Little Endian mode the 128 bits (=16 bytes)
 	for i = 0; i < 8; i++ {
 		(*mac)[i] = byte((h0 >> (i * 8)) & 0xff)
 		(*mac)[i+8] = byte((h1 >> (i * 8)) & 0xff)

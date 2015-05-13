@@ -187,98 +187,56 @@ func AES_128(k_aes, nonce *[]byte) *[]byte {
 	return &s
 }
 
-func mul(dst *[4]uint64, a, b uint64) {
-	a128 := [4]uint64{a & 0xffffffff, a >> 32, 0, 0}
-	b128 := [4]uint64{b & 0xffffffff, b >> 32, 0, 0}
-
-	// t  = a[0]*b[0]
-	dst[0] = a128[0] * b128[0]
-
-	// k  = t >> 32
-	dst[1] = dst[0] >> 32
-
-	// w3 = t & 0xffffffff
-	dst[0] &= 0xffffffff
-
-	// t  = a[1]*b[0] + k
-	dst[1] += a128[1] * b128[0]
-
-	// w1 = t >> 32
-	dst[2] = dst[1] >> 32
-
-	// k  = t & 0xffffffff
-	dst[1] &= 0xffffffff
-
-	// t  = a[0]*b[1] + k
-	dst[1] += a128[0] * b128[1]
-
-	// k  = t >> 32
-	dst[2] += dst[1] >> 32
-
-	dst[3] = (dst[2] >> 32)
-	dst[2] &= 0xffffffff
-	dst[2] += a128[1] * b128[1]
-	dst[3] += (dst[2] >> 32)
-	dst[1] &= 0xffffffff
-	dst[2] &= 0xffffffff
-	dst[3] &= 0xffffffff
+func mul_reg(dst *[4]uint64, a, b uint64) {
+	a0 := a & 0xffffffff
+	a1 := a >> 32
+	b0 := b & 0xffffffff
+	b1 := b >> 32
+	dst0 := a0 * b0
+	dst1 := dst0 >> 32
+	dst[0] = dst0 & 0xffffffff
+	dst1 += a1 * b0
+	dst2 := dst1 >> 32
+	dst1 &= 0xffffffff
+	dst1 += a0 * b1
+	dst2 += dst1 >> 32
+	dst3 := dst2 >> 32
+	dst2 &= 0xffffffff
+	dst2 += a1 * b1
+	dst3 += dst2 >> 32
+	dst[1] = dst1 & 0xffffffff
+	dst[2] = dst2 & 0xffffffff
+	dst[3] = dst3 & 0xffffffff
 }
 
-func addlo(dst *[4]uint64, a uint64) {
-	dst[0] += (a & 0xffffffff)
-	dst[1] += (a >> 32)
-	// propagate carries
-	dst[1] += (dst[0] >> 32)
-	dst[0] &= 0xffffffff
-	dst[2] += (dst[1] >> 32)
-	dst[1] &= 0xffffffff
-	dst[3] += (dst[2] >> 32)
-	dst[2] &= 0xffffffff
-	dst[3] &= 0xffffffff
+func addlo_reg(dst *[4]uint64, a uint64) {
+	dst0 := dst[0] + (a & 0xffffffff)
+	dst1 := dst[1] + (a >> 32)
+	dst1 += dst0 >> 32
+	dst[0] = dst0 & 0xffffffff
+	dst2 := dst[2] + (dst1 >> 32)
+	dst[1] = dst1 & 0xffffffff
+	dst3 := dst[3] + (dst2 >> 32)
+	dst[2] = dst2 & 0xffffffff
+	dst[3] = dst3 & 0xffffffff
 }
 
-func add(dst, a *[4]uint64) {
-	dst[0] += a[0]
-	dst[1] += a[1]
-	dst[2] += a[2]
-	dst[3] += a[3]
-	// propagate carries
-	dst[1] += (dst[0] >> 32)
-	dst[0] &= 0xffffffff
-	dst[2] += (dst[1] >> 32)
-	dst[1] &= 0xffffffff
-	dst[3] += (dst[2] >> 32)
-	dst[2] &= 0xffffffff
-	dst[3] &= 0xffffffff
+func add_reg(dst, a *[4]uint64) {
+	dst0 := dst[0] + a[0]
+	dst1 := dst[1] + a[1]
+	dst2 := dst[2] + a[2]
+	dst3 := dst[3] + a[3]
+	dst1 += dst0 >> 32
+	dst[0] = dst0 & 0xffffffff
+	dst2 = dst2 + (dst1 >> 32)
+	dst[1] = dst1 & 0xffffffff
+	dst3 += (dst2 >> 32)
+	dst[2] = dst2 & 0xffffffff
+	dst[3] = dst3 & 0xffffffff
 }
 
-func shr(src *[4]uint64, bit uint) uint64 {
-	if bit == 0 {
-		return src[0] + (src[1] << 32)
-	}
-	if bit < 32 {
-		return (src[0] >> bit) + (src[1] << (32 - bit)) + (src[2] << (64 - bit))
-	}
-	if bit == 32 {
-		return src[1] + (src[2] << 32)
-	}
-	if bit < 64 {
-		return (src[1] >> (bit - 32)) + (src[2] << (64 - bit)) + (src[3] << (96 - bit))
-	}
-	if bit == 64 {
-		return src[2] + (src[3] << 32)
-	}
-	if bit < 96 {
-		return (src[2] >> (bit - 64)) + (src[3] << (96 - bit))
-	}
-	if bit == 96 {
-		return src[3]
-	}
-	if bit < 128 {
-		return (src[3] >> (bit - 96))
-	} else {
-		return 0
-	}
+func shr_reg(src *[4]uint64, bit uint) uint64 {
+	return (src[1] >> (bit - 32)) + (src[2] << (64 - bit)) + (src[3] << (96 - bit))
 }
 
 func Poly1305(mac, data, r_key, s_key *[]byte) bool {
@@ -373,48 +331,53 @@ func Poly1305(mac, data, r_key, s_key *[]byte) bool {
 		// Calculate h = h * r --> MUST DEBUG !!!!
 
 		// d0 = h0*r0 + h1*(r2*(5<<2)) + h2*(r1*(5<<2))
-		mul(&d0, h0, r0)
-		mul(&d, h1, s2)
-		add(&d0, &d)
-		mul(&d, h2, s1)
-		add(&d0, &d)
+		mul_reg(&d0, h0, r0)
+		mul_reg(&d, h1, s2)
+		add_reg(&d0, &d)
+		mul_reg(&d, h2, s1)
+		add_reg(&d0, &d)
 
 		// d1 = h0*r1 + h1*r0 + h2*(r2*(5<<2))
-		mul(&d1, h0, r1)
-		mul(&d, h1, r0)
-		add(&d1, &d)
-		mul(&d, h2, s2)
-		add(&d1, &d)
+		mul_reg(&d1, h0, r1)
+		mul_reg(&d, h1, r0)
+		add_reg(&d1, &d)
+		mul_reg(&d, h2, s2)
+		add_reg(&d1, &d)
 
 		// d2 = h0*r2 + h1*r1 + h2*r0
-		mul(&d2, h0, r2)
-		mul(&d, h1, r1)
-		add(&d2, &d)
-		mul(&d, h2, r0)
-		add(&d2, &d)
+		mul_reg(&d2, h0, r2)
+		mul_reg(&d, h1, r1)
+		add_reg(&d2, &d)
+		mul_reg(&d, h2, r0)
+		add_reg(&d2, &d)
 
 		// partial h %= ((2^130)-5)
 		// In fact we don't calculate the complete modulo value, but the lowest value that is < 2^130
 
+		// Convert d (= uint128 simulated with 4 uint64 that contains 32+32+32+32 bits)
+		// into h (= uint130 simulated with 3 uint64 that contains 42+44+44) and propagate the carry ( = c )
+
 		// h0 = LSB 44 bits of d0
-		c = shr(&d0, 44)
+		c = (d0[1] >> 12) + (d0[2] << 20) + (d0[3] << 52)
 		h0 = (d0[0] + (d0[1] << 32)) & 0xfffffffffff
 
 		// h1 = LSB 44 bits of d1
-		addlo(&d1, c)
-		c = shr(&d1, 44)
+		addlo_reg(&d1, c)
+		c = (d1[1] >> 12) + (d1[2] << 20) + (d1[3] << 52)
 		h1 = (d1[0] + (d1[1] << 32)) & 0xfffffffffff
 
 		// h1 = LSB 42 bits of d2
-		addlo(&d2, c)
-		c = shr(&d2, 42)
+		addlo_reg(&d2, c)
+		c = (d2[1] >> 10) + (d2[2] << 22) + (d2[3] << 54)
 		h2 = (d2[0] + (d2[1] << 32)) & 0x3ffffffffff
 
-		// Propagate the carry
+		// Use the carry (= c) to calculate the partial modulo (2^130 - 5)
+		// partial modulo = multiply the 130 bits value by the carry (the carry is the upper bit at the left of the 130 bits)
 		h0 += c * 5
 		c = (h0 >> 44)
 		h0 = h0 & 0xfffffffffff
 		h1 += c
+		// Note: the carry is not fully propagated into h here, the full carry will be made after the last chunk (=after the 'chunk' loop)
 	}
 
 	// Fully carry h
@@ -501,7 +464,7 @@ func main() {
 	nonce := []byte{0x61, 0xee, 0x09, 0x21, 0x8d, 0x29, 0xb0, 0xaa, 0xed, 0x7e, 0x15, 0x4a, 0x2c, 0x55, 0x09, 0xcc}
 	s := AES_128(&k_aes, &nonce)
 	test_poly1305(&mac, &data, &r_key, s)
-	fmt.Printf("               Correct MAC is = [16] dd3fab2251f11ac759f0887129cc2ee7\n\n")
+	fmt.Printf("                  Waiting MAC = [16] dd3fab2251f11ac759f0887129cc2ee7\n\n")
 
 	data = []byte{0xf3, 0xf6}
 	r_key = []byte{0x85, 0x1f, 0xc4, 0x0c, 0x34, 0x67, 0xac, 0x0b, 0xe0, 0x5c, 0xc2, 0x04, 0x04, 0xf3, 0xf7, 0x00}
@@ -509,7 +472,7 @@ func main() {
 	nonce = []byte{0xfb, 0x44, 0x73, 0x50, 0xc4, 0xe8, 0x68, 0xc5, 0x2a, 0xc3, 0x27, 0x5c, 0xf9, 0xd4, 0x32, 0x7e}
 	s = AES_128(&k_aes, &nonce)
 	test_poly1305(&mac, &data, &r_key, s)
-	fmt.Printf("               Correct MAC is = [16] f4c633c3044fc145f84f335cb81953de\n\n")
+	fmt.Printf("                  Waiting MAC = [16] f4c633c3044fc145f84f335cb81953de\n\n")
 
 	data = []byte{0x66, 0x3c, 0xea, 0x19, 0x0f, 0xfb, 0x83, 0xd8, 0x95, 0x93, 0xf3, 0xf4, 0x76, 0xb6, 0xbc, 0x24,
 		0xd7, 0xe6, 0x79, 0x10, 0x7e, 0xa2, 0x6a, 0xdb, 0x8c, 0xaf, 0x66, 0x52, 0xd0, 0x65, 0x61, 0x36}
@@ -518,7 +481,7 @@ func main() {
 	nonce = []byte{0xae, 0x21, 0x2a, 0x55, 0x39, 0x97, 0x29, 0x59, 0x5d, 0xea, 0x45, 0x8b, 0xc6, 0x21, 0xff, 0x0e}
 	s = AES_128(&k_aes, &nonce)
 	test_poly1305(&mac, &data, &r_key, s)
-	fmt.Printf("               Correct MAC is = [16] 0ee1c16bb73f0f4fd19881753c01cdbe\n\n")
+	fmt.Printf("                  Waiting MAC = [16] 0ee1c16bb73f0f4fd19881753c01cdbe\n\n")
 
 	data = []byte{0xab, 0x08, 0x12, 0x72, 0x4a, 0x7f, 0x1e, 0x34, 0x27, 0x42, 0xcb, 0xed, 0x37, 0x4d, 0x94, 0xd1,
 		0x36, 0xc6, 0xb8, 0x79, 0x5d, 0x45, 0xb3, 0x81, 0x98, 0x30, 0xf2, 0xc0, 0x44, 0x91, 0xfa, 0xf0,
@@ -529,30 +492,29 @@ func main() {
 	nonce = []byte{0x9a, 0xe8, 0x31, 0xe7, 0x43, 0x97, 0x8d, 0x3a, 0x23, 0x52, 0x7c, 0x71, 0x28, 0x14, 0x9e, 0x3a}
 	s = AES_128(&k_aes, &nonce)
 	test_poly1305(&mac, &data, &r_key, s)
-	fmt.Printf("               Correct MAC is = [16] 5154ad0d2cb26e01274fc51148491f1b\n\n")
+	fmt.Printf("                  Waiting MAC = [16] 5154ad0d2cb26e01274fc51148491f1b\n\n")
 
 	data = []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
 	nonce = []byte{0x6b, 0x65, 0x79, 0x20, 0x66, 0x6f, 0x72, 0x20, 0x50, 0x6f, 0x6c, 0x79, 0x31, 0x33, 0x30, 0x35}
 	r_key = []byte{0x74, 0x68, 0x69, 0x73, 0x20, 0x69, 0x73, 0x20, 0x33, 0x32, 0x2d, 0x62, 0x79, 0x74, 0x65, 0x20}
 	test_poly1305(&mac, &data, &r_key, &nonce)
-	fmt.Printf("               Correct MAC is = [16] 49ec78090e481ec6c26b33b91ccc0307\n\n")
+	fmt.Printf("                  Waiting MAC = [16] 49ec78090e481ec6c26b33b91ccc0307\n\n")
 
 	data = []byte{0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x20, 0x77, 0x6f, 0x72, 0x6c, 0x64, 0x21}
 	nonce = []byte{0x6b, 0x65, 0x79, 0x20, 0x66, 0x6f, 0x72, 0x20, 0x50, 0x6f, 0x6c, 0x79, 0x31, 0x33, 0x30, 0x35}
 	r_key = []byte{0x74, 0x68, 0x69, 0x73, 0x20, 0x69, 0x73, 0x20, 0x33, 0x32, 0x2d, 0x62, 0x79, 0x74, 0x65, 0x20}
 	test_poly1305(&mac, &data, &r_key, &nonce)
-	fmt.Printf("               Correct MAC is = [16] a6f745008f81c916a20dcc74eef2b2f0\n\n")
+	fmt.Printf("                  Waiting MAC = [16] a6f745008f81c916a20dcc74eef2b2f0\n\n")
 
+	fmt.Printf("%x\n", 0xc0a8787e<<5)
 }
 
 func test_poly1305(mac, data, r_key, s *[]byte) {
 	fmt.Printf("data                          = [%v] %x\n", len(*data), *data)
-	// fmt.Printf("r                             = [%v] %x\n", len(*r_key), *r_key)
-	// fmt.Printf("s                             = [%v] %x\n", len(*s), *s)
 	if Poly1305(mac, data, r_key, s) {
-		fmt.Printf("Poly1305(data,r,AES-128(k,n)) = [%v] %x\n", len(*mac), *mac)
+		fmt.Printf("Poly1305(data,r,s)            = [%v] %x\n", len(*mac), *mac)
 	} else {
-		fmt.Printf("Poly1305(data,r,AES-128(k,n)) mac and keys size must be 16 bytes!\n\n", len(*mac), *mac)
+		fmt.Printf("Poly1305(data,r,s) mac and keys size must be 16 bytes!\n\n", len(*mac), *mac)
 	}
 }

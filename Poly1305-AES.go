@@ -506,8 +506,6 @@ func main() {
 	r_key = []byte{0x74, 0x68, 0x69, 0x73, 0x20, 0x69, 0x73, 0x20, 0x33, 0x32, 0x2d, 0x62, 0x79, 0x74, 0x65, 0x20}
 	test_poly1305(&mac, &data, &r_key, &nonce)
 	fmt.Printf("                  Waiting MAC = [16] a6f745008f81c916a20dcc74eef2b2f0\n\n")
-
-	fmt.Printf("%x\n", 0xc0a8787e<<5)
 }
 
 func test_poly1305(mac, data, r_key, s *[]byte) {
